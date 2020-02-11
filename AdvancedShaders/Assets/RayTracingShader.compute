@@ -10,7 +10,6 @@ Texture2D<float4> _SkyboxTexture;
 SamplerState sampler_SkyboxTexture;
 static const float PI = 3.14159265f;
 
-#pragma region Rays
 struct Ray
 {
 	float3 origin;
@@ -55,7 +54,6 @@ RayHit CreateRayHit()
 	rayHit.normal = float3(0.0f, 0.0f, 0.0f);
 	return rayHit;
 }
-#pragma endregion Rays
 
 // Inout to directly modify the value in the original struct, rather than a copy
 void IntersectGroundPlane(Ray ray, inout RayHit bestHit)
@@ -70,10 +68,34 @@ void IntersectGroundPlane(Ray ray, inout RayHit bestHit)
 	}
 }
 
+void IntersectSphere(Ray ray, inout RayHit bestHit, float4 sphere)
+{
+	// Calculate distance along the ray where the sphere is intersected
+	float3 d = ray.origin - sphere.xyz;
+	float p1 = -dot(ray.direction, d);
+	float p2sqr = p1 * p1 - dot(d, d) + sphere.w * sphere.w;
+
+	if (p2sqr < 0)
+	{
+		return;
+	}
+	
+	float p2 = sqrt(p2sqr);
+	float t = p1 - p2 > 0 ? p1 - p2 : p1 + p2;
+	
+	if (t > 0 && t < bestHit.distance)
+	{
+		bestHit.distance = t;
+		bestHit.position = ray.origin + t * ray.direction;
+		bestHit.normal = normalize(bestHit.position - sphere.xyz);
+	}
+}
+
 RayHit Trace(Ray ray)
 {
 	RayHit bestHit = CreateRayHit();
 	IntersectGroundPlane(ray, bestHit);
+	IntersectSphere(ray, bestHit, float4(0, 3.0f, 0, 1.0f));
 	return bestHit;
 }
 

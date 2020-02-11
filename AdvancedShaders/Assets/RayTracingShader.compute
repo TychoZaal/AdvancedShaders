@@ -10,6 +10,8 @@ Texture2D<float4> _SkyboxTexture;
 SamplerState sampler_SkyboxTexture;
 static const float PI = 3.14159265f;
 
+RWStructuredBuffer<int> colors;
+
 struct Ray
 {
 	float3 origin;
@@ -133,4 +135,6 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 	RayHit hit = Trace(ray);
 	float3 result = Shade(ray, hit);
 	Result[id.xy] = float4(result, 1);
+	
+    colors[0] = 5;
 }

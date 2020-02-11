@@ -1,15 +1,114 @@
 ﻿// Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CSMain
 
-// Create a RenderTexture with enableRandomWrite flag and set it
-// with cs.SetTexture
+// Create a RenderTexture with enableRandomWrite flag and set it with cs.SetTexture
+
 RWTexture2D<float4> Result;
+float4x4 _CameraToWorld; // 4x4 means it is a matrix
+float4x4 _CameraInverseProjection;
+Texture2D<float4> _SkyboxTexture;
+SamplerState sampler_SkyboxTexture;
+static const float PI = 3.14159265f;
+
+#pragma region Rays
+struct Ray
+{
+	float3 origin;
+	float3 direction;
+};
+
+struct RayHit
+{
+	float3 position;
+	float distance;
+	float3 normal;
+};
+
+Ray CreateRay(float3 origin, float3 direction) // Create new ray and set it values
+{
+	Ray ray;
+	ray.origin = origin;
+	ray.direction = direction;
+	return ray;
+}
+
+Ray CreateCameraRay(float2 uv)
+{
+	// Transform the camera origin to world space
+	float3 origin = mul(_CameraToWorld, float4(0.0f, 0.0f, 0.0f, 1.0f)).xyz;
+
+	// Invert the perspective projection of the view-space position
+	float3 direction = mul(_CameraInverseProjection, float4(uv, 0.0f, 1.0f)).xyz;
+
+	// Transform the direction from camera to world space and normalize
+	direction = mul(_CameraToWorld, float4(direction, 0.0f)).xyz;
+	direction = normalize(direction);
+
+	return CreateRay(origin, direction);
+}
+
+RayHit CreateRayHit()
+{
+	RayHit rayHit;
+	rayHit.position = float3(0.0f, 0.0f, 0.0f);
+	rayHit.distance = 1.#INF;
+	rayHit.normal = float3(0.0f, 0.0f, 0.0f);
+	return rayHit;
+}
+#pragma endregion Rays
+
+// Inout to directly modify the value in the original struct, rather than a copy
+void IntersectGroundPlane(Ray ray, inout RayHit bestHit)
+{
+	// Calculate distance along the ray where the ground plane is intersected
+	float t = -ray.origin.y / ray.direction.y;
+	if (t > 0 && t < bestHit.distance)
+	{
+		bestHit.distance = t;
+		bestHit.position = ray.origin + t * ray.direction;
+		bestHit.normal = float3(0.0f, 1.0f, 0.0f);
+	}
+}
+
+RayHit Trace(Ray ray)
+{
+	RayHit bestHit = CreateRayHit();
+	IntersectGroundPlane(ray, bestHit);
+	return bestHit;
+}
+
+float3 Shade(inout Ray ray, RayHit hit)
+{
+	if (hit.distance < 1.#INF)
+	{
+		// Return the normal for debugging purposes
+		return hit.normal * 0.5f + 0.5f;
+	}
+	else
+	{
+		// Sample the skybox and write it
+		float theta = acos(ray.direction.y) / -PI;
+		float phi = atan2(ray.direction.x, -ray.direction.z) / -PI * 0.5f;
+
+		// Saves the values of 2D coordinates in the Result matrix. 0 is the LOD level.
+		return _SkyboxTexture.SampleLevel(sampler_SkyboxTexture, float2(phi, theta), 0).xyz;
+	}
+}
 
 [numthreads(8,8,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
-    // TODO: insert actual code here!
+	// Get the dimensions of the RenderTexture
+	uint width, height; // uint is 32 bit int that must be positive (u = unasigned)
+	Result.GetDimensions(width, height);
 
-	// Fractal shader
-    Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+	// Transform the pixel to [-1, 1] range
+	float2 uv = float2 ((id.xy + float2(0.5f, 0.5f)) / float2(width, height) * 2.0f - 1.0f);
+
+	// Get a ray for the UVs
+	Ray ray = CreateCameraRay(uv);
+
+	RayHit hit = Trace(ray);
+	float3 result = Shade(ray, hit);
+	Result[id.xy] = float4(result, 1);
 }

@@ -3,6 +3,7 @@
 public class RayTracingMaster : MonoBehaviour
 {
     public ComputeShader rayTracingShader;
+    public Texture skyBox;
 
     private RenderTexture _target;
 
@@ -14,8 +15,12 @@ public class RayTracingMaster : MonoBehaviour
     [SerializeField]
     private int yThreads = 135;
 
+    [SerializeField]
+    private Camera _camera;
+
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
+        SetShaderParameters();
         Render(destination);
     }
 
@@ -48,5 +53,12 @@ public class RayTracingMaster : MonoBehaviour
             _target.enableRandomWrite = true;
             _target.Create();
         }
+    }
+
+    private void SetShaderParameters()
+    {
+        rayTracingShader.SetMatrix("_CameraToWorld", _camera.cameraToWorldMatrix);
+        rayTracingShader.SetMatrix("_CameraInverseProjection", _camera.projectionMatrix.inverse);
+        rayTracingShader.SetTexture(0, "_SkyboxTexture", skyBox);
     }
 }

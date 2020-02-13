@@ -7,6 +7,8 @@ public class RayTracingMaster : MonoBehaviour
     public Texture skyBox;
 
     private RenderTexture _target;
+    private uint _currentSample = 0;
+    private Material _addMaterial; 
 
     #region Filler
     [Tooltip("240 is Screen.width / 8. The higher the number to more details on the X axis")]
@@ -35,22 +37,17 @@ public class RayTracingMaster : MonoBehaviour
         // Set the target and dispatch the compute shader
         rayTracingShader.SetTexture(0, "Result", _target);
 
-        buffer = new ComputeBuffer(48, 48);
-        int[] cols = new int[12];
-        buffer.SetData(cols);
-        rayTracingShader.SetBuffer(rayTracingShader.FindKernel("CSMain"), "colors", buffer);
-
         rayTracingShader.Dispatch(0, xThreads, yThreads, 1);
-        
-        buffer.GetData(cols);
 
-        for (int i = 0; i < cols.Length - 1; i++)
-        {
-            Debug.Log(cols[i]);
-        }
+        if (_addMaterial == null)
+            _addMaterial = new Material(Shader.Find("Hidden/AddShader"));
+
+        _addMaterial.SetFloat("_Sample", _currentSample);
 
         // Apply new texture as post processing overlay
-        Graphics.Blit(_target, destination);
+        Graphics.Blit(_target, destination, _addMaterial);
+
+        _currentSample++;
     }
 
     // Ensures there is a render texture with the proper resolution
@@ -67,6 +64,7 @@ public class RayTracingMaster : MonoBehaviour
             _target = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
             _target.enableRandomWrite = true;
             _target.Create();
+            _currentSample = 0;
         }
     }
 
@@ -75,5 +73,15 @@ public class RayTracingMaster : MonoBehaviour
         rayTracingShader.SetMatrix("_CameraToWorld", _camera.cameraToWorldMatrix);
         rayTracingShader.SetMatrix("_CameraInverseProjection", _camera.projectionMatrix.inverse);
         rayTracingShader.SetTexture(0, "_SkyboxTexture", skyBox);
+        rayTracingShader.SetVector("_PixelOffset", new Vector2(Random.value, Random.value));
+    }
+
+    private void Update()
+    {
+        if (transform.hasChanged)
+        {
+            _currentSample = 0;
+            transform.hasChanged = false;
+        }
     }
 }

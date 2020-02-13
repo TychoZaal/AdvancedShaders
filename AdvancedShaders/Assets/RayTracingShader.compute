@@ -10,6 +10,24 @@ Texture2D<float4> _SkyboxTexture;
 SamplerState sampler_SkyboxTexture;
 static const float PI = 3.14159265f;
 float2 _PixelOffset;
+float _Time;
+float4 _DirectionalLight;
+
+struct Sphere
+{
+    float3 position;
+    float radius;
+    float3 albedo;
+    float3 specular;
+};
+
+struct Plane
+{
+    float3 position;
+    float radius;
+    float3 albedo;
+    float3 specular;
+};
 
 struct Ray
 {
@@ -23,7 +41,11 @@ struct RayHit
 	float3 position;
 	float distance;
 	float3 normal;
+    float3 albedo;
+    float3 specular;
 };
+
+RWStructuredBuffer<Sphere> _Spheres;
 
 Ray CreateRay(float3 origin, float3 direction) // Create new ray and set it values
 {
@@ -55,6 +77,8 @@ RayHit CreateRayHit()
 	rayHit.position = float3(0.0f, 0.0f, 0.0f);
 	rayHit.distance = 1.#INF;
 	rayHit.normal = float3(0.0f, 0.0f, 0.0f);
+    rayHit.albedo = float3(0.0f, 0.0f, 0.0f);
+    rayHit.specular = float3(0.0f, 0.0f, 0.0f);
 	return rayHit;
 }
 
@@ -68,15 +92,18 @@ void IntersectGroundPlane(Ray ray, inout RayHit bestHit)
 		bestHit.distance = t;
 		bestHit.position = ray.origin + t * ray.direction;
 		bestHit.normal = float3(0.0f, 1.0f, 0.0f);
-	}
+        bestHit.albedo = 0.8f;
+        bestHit.specular = 0.03f;
+    }
 }
 
-void IntersectSphere(Ray ray, inout RayHit bestHit, float4 sphere)
+void IntersectSphere(Ray ray, inout RayHit bestHit, uint sphereIndex)
 {
+    Sphere sphere = _Spheres[sphereIndex];
 	// Calculate distance along the ray where the sphere is intersected
-	float3 d = ray.origin - sphere.xyz;
+	float3 d = ray.origin - sphere.position;
 	float p1 = -dot(ray.direction, d);
-	float p2sqr = p1 * p1 - dot(d, d) + sphere.w * sphere.w;
+	float p2sqr = p1 * p1 - dot(d, d) + sphere.radius * sphere.radius;
 
 	if (p2sqr < 0)
 	{
@@ -90,53 +117,49 @@ void IntersectSphere(Ray ray, inout RayHit bestHit, float4 sphere)
 	{
 		bestHit.distance = t;
 		bestHit.position = ray.origin + t * ray.direction;
-		bestHit.normal = normalize(bestHit.position - sphere.xyz);
-	}
+		bestHit.normal = normalize(bestHit.position - sphere.position);
+        bestHit.albedo = sphere.albedo;
+        bestHit.specular = sphere.specular;
+    }
 }
 
 RayHit Trace(Ray ray)
 {
-    int amountOfSpheres = 100;
-    int spheresPerRow = 10;
-    int currentRow = 1;
-    int currentHorizontal = 1;
-    float horizontalOffset = 3.0f;
-    float verticalOffset = 3.0f;
-	
 	RayHit bestHit = CreateRayHit();
 	IntersectGroundPlane(ray, bestHit);
 	
-    for (int i = 0; i < amountOfSpheres - 1; i++)
+    uint numSpheres, stride;
+    _Spheres.GetDimensions(numSpheres, stride);
+    for (uint i = 0; i < numSpheres; i++)
     {
-        IntersectSphere(ray, bestHit, float4(horizontalOffset * currentHorizontal, 3.0f, verticalOffset * currentRow, 1.0f));
-        
-        currentHorizontal++;
-		
-        if (currentHorizontal >= spheresPerRow)
-        {
-            currentHorizontal = 1;
-            currentRow++;
-        }
+        IntersectSphere(ray, bestHit, i);
     }
 	
-	return bestHit;
+    return bestHit;
 }
 
 float3 Shade(inout Ray ray, RayHit hit)
 {
 	if (hit.distance < 1.#INF)
-	{
-        float3 specular = float3(0.6f, 0.6f, 0.6f);
-		
+    {
 		// Reflect the ray and multiply energy with specular reflection
         ray.origin = hit.position + hit.normal * 0.001f;
         ray.direction = reflect(ray.direction, hit.normal);
-        ray.energy *= specular;
+        ray.energy *= hit.specular;
 		
-		// Return nothing
-        return float3(0.0f, 0.0f, 0.0f);
+        bool shadow = false;
+        Ray shadowRay = CreateRay(hit.position + hit.normal * 0.001f, -1 * _DirectionalLight.xyz);
+        RayHit shadowHit = Trace(shadowRay);
+		
+        if (shadowHit.distance != 1.#INF)
+        {
+            return float3 (0.0f, 0.0f, 0.0f);
+        }
+		
+		// Return diffuse-shaded color
+        return saturate(dot(hit.normal, _DirectionalLight.xyz) * -1) * _DirectionalLight.w * hit.albedo;
     }
-	else
+	else // The ray isn't stopped, which means it hit the skybox
 	{
 		// Erase the ray's energy, since the skybox doesn't reflect
         ray.energy = 0.0f;
@@ -146,7 +169,7 @@ float3 Shade(inout Ray ray, RayHit hit)
 		float phi = atan2(ray.direction.x, -ray.direction.z) / -PI * 0.5f;
 
 		// Saves the values of 2D coordinates in the Result matrix. 0 is the LOD level.
-		return _SkyboxTexture.SampleLevel(sampler_SkyboxTexture, float2(phi, theta), 0).xyz;
+		return _SkyboxTexture.SampleLevel(sampler_SkyboxTexture, float2(phi, theta), 0).xyz * 1.8f;
 	}
 }
 

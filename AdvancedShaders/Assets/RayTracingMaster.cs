@@ -1,13 +1,17 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public class RayTracingMaster : MonoBehaviour
 {
+    public int SphereSeed;
+
     public ComputeShader rayTracingShader;
     public ComputeBuffer buffer;
     public Texture skyBox;
 
-    private RenderTexture _target;
+    private RenderTexture _target, _converged;
     private uint _currentSample = 0;
     private Material _addMaterial;
 
@@ -31,12 +35,34 @@ public class RayTracingMaster : MonoBehaviour
     public float spherePlacementRadius = 100f;
     private ComputeBuffer _sphereBuffer;
 
+    #region Meshes
+    private static bool _meshObjectsNeedRebuilding = false;
+
+    private static List<RayTracingObject> _rayTracingObjects = new List<RayTracingObject>();
+    private static List<MeshObject> _meshObjects = new List<MeshObject>();
+    private static List<Vector3> _vertices = new List<Vector3>();
+    private static List<int> _indices = new List<int>();
+
+    private ComputeBuffer _meshObjectBuffer;
+    private ComputeBuffer _vertexBuffer;
+    private ComputeBuffer _indexBuffer;
+
+    struct MeshObject
+    {
+        public Matrix4x4 localToWorldMatrix;
+        public int indices_offset;
+        public int indices_count;
+    }
+    #endregion
+
     struct Sphere
     {
         public Vector3 position;
         public float radius;
         public Vector3 albedo;
         public Vector3 specular;
+        public float smoothness;
+        public Vector3 emission;
     }
 
     private void OnEnable()
@@ -53,6 +79,8 @@ public class RayTracingMaster : MonoBehaviour
 
     private void SetUpScene()
     {
+        UnityEngine.Random.InitState(SphereSeed);
+
         List<Sphere> spheres = new List<Sphere>();
 
         // Add a number of random spheres
@@ -61,8 +89,8 @@ public class RayTracingMaster : MonoBehaviour
             Sphere sphere = new Sphere();
 
             // Radius and radius
-            sphere.radius = sphereRadius.x + Random.value * (sphereRadius.y - sphereRadius.x);
-            Vector2 randomPos = Random.insideUnitCircle * spherePlacementRadius;
+            sphere.radius = sphereRadius.x + UnityEngine.Random.value * (sphereRadius.y - sphereRadius.x);
+            Vector2 randomPos = UnityEngine.Random.insideUnitCircle * spherePlacementRadius;
             sphere.position = new Vector3(randomPos.x, sphere.radius, randomPos.y);
 
             foreach (Sphere other in spheres)
@@ -75,10 +103,20 @@ public class RayTracingMaster : MonoBehaviour
             }
 
             // Albedo and specular color
-            Color color = Random.ColorHSV();
-            bool metal = Random.value < 0.5f;
-            sphere.albedo = metal ? Vector3.zero : new Vector3(color.r, color.g, color.b);
-            sphere.specular = metal ? new Vector3(color.r, color.g, color.b) : Vector3.one * 0.04f;
+            Color color = UnityEngine.Random.ColorHSV();
+            float chance = UnityEngine.Random.value;
+            if (chance < 0.8f)
+            {
+                bool metal = chance < 0.4f;
+                sphere.albedo = metal ? Vector4.zero : new Vector4(color.r, color.g, color.b);
+                sphere.specular = metal ? new Vector4(color.r, color.g, color.b) : new Vector4(0.04f, 0.04f, 0.04f);
+                sphere.smoothness = UnityEngine.Random.value;
+            }
+            else
+            {
+                Color emission = UnityEngine.Random.ColorHSV(0, 1, 0, 1, 3.0f, 8.0f);
+                sphere.emission = new Vector3(emission.r, emission.g, emission.b);
+            }
 
             // Add spheres to list
             spheres.Add(sphere);
@@ -88,12 +126,13 @@ public class RayTracingMaster : MonoBehaviour
         }
 
         // Assign to compute buffer
-        _sphereBuffer = new ComputeBuffer(spheres.Count, 40);
+        _sphereBuffer = new ComputeBuffer(spheres.Count, 56);
         _sphereBuffer.SetData(spheres);
     }
 
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
+        RebuildMeshObjectBuffers();
         SetShaderParameters();
         Render(destination);
     }
@@ -114,7 +153,8 @@ public class RayTracingMaster : MonoBehaviour
         _addMaterial.SetFloat("_Sample", _currentSample);
 
         // Apply new texture as post processing overlay
-        Graphics.Blit(_target, destination, _addMaterial);
+        Graphics.Blit(_target, _converged, _addMaterial);
+        Graphics.Blit(_converged, destination);
 
         _currentSample++;
     }
@@ -135,17 +175,37 @@ public class RayTracingMaster : MonoBehaviour
             _target.Create();
             _currentSample = 0;
         }
+
+        // If render texture doesn't exist or doesn't match the screen render
+        if (_converged == null || _converged.width != Screen.width || _converged.height != Screen.height)
+        {
+            // Release render texture we do have
+            if (_converged != null)
+                _converged.Release();
+
+            // Get a new render texture to work with
+            _converged = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
+            _converged.enableRandomWrite = true;
+            _converged.Create();
+            _currentSample = 0;
+        }
     }
 
     private void SetShaderParameters()
     {
+        rayTracingShader.SetTexture(0, "_SkyboxTexture", skyBox);
         rayTracingShader.SetMatrix("_CameraToWorld", _camera.cameraToWorldMatrix);
         rayTracingShader.SetMatrix("_CameraInverseProjection", _camera.projectionMatrix.inverse);
-        rayTracingShader.SetTexture(0, "_SkyboxTexture", skyBox);
-        rayTracingShader.SetVector("_PixelOffset", new Vector2(Random.value, Random.value));
+        rayTracingShader.SetVector("_PixelOffset", new Vector2(UnityEngine.Random.value, UnityEngine.Random.value));
+        rayTracingShader.SetFloat("_Seed", UnityEngine.Random.value);
+
         Vector3 l = directionalLight.transform.forward;
         rayTracingShader.SetVector("_DirectionalLight", new Vector4(l.x, l.y, l.z, directionalLight.intensity));
-        rayTracingShader.SetBuffer(0, "_Spheres", _sphereBuffer);
+
+        SetComputeBuffer("_Spheres", _sphereBuffer);
+        SetComputeBuffer("_MeshObjects", _meshObjectBuffer);
+        SetComputeBuffer("_Vertices", _vertexBuffer);
+        SetComputeBuffer("_Indices", _indexBuffer);
     }
 
     private void Update()
@@ -157,5 +217,93 @@ public class RayTracingMaster : MonoBehaviour
             directionalLight.transform.hasChanged = false;
         }
         rayTracingShader.SetFloat("_Time", Time.time);
+    }
+
+    public static void RegisterObject(RayTracingObject obj)
+    {
+        _rayTracingObjects.Add(obj);
+        _meshObjectsNeedRebuilding = true;
+    }
+
+    public static void UnregisterObject(RayTracingObject obj)
+    {
+        _rayTracingObjects.Remove(obj);
+        _meshObjectsNeedRebuilding = true;
+    }
+
+    private void RebuildMeshObjectBuffers()
+    {
+        if (!_meshObjectsNeedRebuilding)
+            return;
+
+        _meshObjectsNeedRebuilding = false;
+        _currentSample = 0;
+
+        // Clear all lists
+        _meshObjects.Clear();
+        _vertices.Clear();
+        _indices.Clear();
+
+        // Loop over all objects and gather their data
+        foreach (RayTracingObject obj in _rayTracingObjects)
+        {
+            Mesh mesh = obj.GetComponent<MeshFilter>().sharedMesh;
+
+            // Add vertex data
+            int firstVertex = _vertices.Count;
+            _vertices.AddRange(mesh.vertices);
+
+            // Add index data - if the vertex buffer wasn't empty before, the indices need to be offset
+            int firstIndex = _indices.Count;
+            int[] indices = mesh.GetIndices(0);
+            _indices.AddRange(indices.Select(index => index + firstVertex));
+
+            // Add the object itself
+            _meshObjects.Add(new MeshObject()
+            {
+                localToWorldMatrix = obj.transform.localToWorldMatrix,
+                indices_offset = firstIndex,
+                indices_count = indices.Length
+            });
+
+            CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, 72);
+            CreateComputeBuffer(ref _vertexBuffer, _vertices, 12);
+            CreateComputeBuffer(ref _indexBuffer, _indices, 4);
+        }
+    }
+
+    private static void CreateComputeBuffer<T>(ref ComputeBuffer buffer, List<T> data, int stride)
+        where T : struct
+    {
+        // Do we already have a compute buffer?
+        if (buffer != null)
+        {
+            // If no data of buffer doesn't match the given criterea, release it
+            if (data.Count == 0 || buffer.count != data.Count || buffer.stride != stride)
+            {
+                buffer.Release();
+                buffer = null;
+            }
+        }
+
+        if (data.Count != 0)
+        {
+            // If the buffer has been releaseed or wasn't there to begin with, create it
+            if (buffer == null)
+            {
+                buffer = new ComputeBuffer(data.Count, stride);
+            }
+
+            // Set data on the buffer 
+            buffer.SetData(data);
+        }
+    }
+
+    private void SetComputeBuffer(string name, ComputeBuffer buffer)
+    {
+        if (buffer != null)
+        {
+            rayTracingShader.SetBuffer(0, name, buffer);
+        }
     }
 }

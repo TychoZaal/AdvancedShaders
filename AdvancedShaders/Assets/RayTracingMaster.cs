@@ -15,7 +15,7 @@ public class RayTracingMaster : MonoBehaviour
     private uint _currentSample = 0;
     private Material _addMaterial;
 
-    public Light directionalLight;
+    public List<Transform> transformsToWatch;
 
     #region Filler
     [Tooltip("240 is Screen.width / 8. The higher the number to more details on the X axis")]
@@ -75,6 +75,15 @@ public class RayTracingMaster : MonoBehaviour
     {
         if (_sphereBuffer != null)
             _sphereBuffer.Release();
+
+        if (_meshObjectBuffer != null)
+            _meshObjectBuffer.Release();
+
+        if (_vertexBuffer != null)
+            _vertexBuffer.Release();
+
+        if (_indexBuffer != null)
+            _indexBuffer.Release();
     }
 
     private void SetUpScene()
@@ -199,9 +208,6 @@ public class RayTracingMaster : MonoBehaviour
         rayTracingShader.SetVector("_PixelOffset", new Vector2(UnityEngine.Random.value, UnityEngine.Random.value));
         rayTracingShader.SetFloat("_Seed", UnityEngine.Random.value);
 
-        Vector3 l = directionalLight.transform.forward;
-        rayTracingShader.SetVector("_DirectionalLight", new Vector4(l.x, l.y, l.z, directionalLight.intensity));
-
         SetComputeBuffer("_Spheres", _sphereBuffer);
         SetComputeBuffer("_MeshObjects", _meshObjectBuffer);
         SetComputeBuffer("_Vertices", _vertexBuffer);
@@ -210,13 +216,15 @@ public class RayTracingMaster : MonoBehaviour
 
     private void Update()
     {
-        if (transform.hasChanged || directionalLight.transform.hasChanged)
+        for (int i = 0; i < transformsToWatch.Count; i++)
         {
-            _currentSample = 0;
-            transform.hasChanged = false;
-            directionalLight.transform.hasChanged = false;
+            if (transformsToWatch[i].hasChanged)
+            {
+                _currentSample = 0;
+                transformsToWatch[i].hasChanged = false;
+                _meshObjectsNeedRebuilding = true;
+            }
         }
-        rayTracingShader.SetFloat("_Time", Time.time);
     }
 
     public static void RegisterObject(RayTracingObject obj)

@@ -6,9 +6,11 @@ using UnityEngine;
 [RequireComponent(typeof(MeshFilter))]
 public class RayTracingObject : MonoBehaviour
 {
+    public RayTracingMaster rayTracingMaster;
     private void OnEnable()
     {
         RayTracingMaster.RegisterObject(this);
+        rayTracingMaster.transformsToWatch.Add(transform);
     }
 
     private void OnDisable()

@@ -11,8 +11,7 @@ SamplerState sampler_SkyboxTexture;
 static const float PI = 3.14159265f;
 static const float EPSILON = 1e-8;
 float2 _PixelOffset, _Pixel;
-float _Time, _Seed;
-float4 _DirectionalLight;
+float _Seed;
 
 struct Sphere
 {
@@ -187,11 +186,11 @@ void IntersectMeshObject(Ray ray, inout RayHit bestHit, MeshObject meshObject)
     uint offset = meshObject.indices_offset;
     uint count = offset + meshObject.indices_count;
     
-    for (int i = offset; i < count; i += 3)
+    for (uint i = offset; i < count; i += 3)
     {
-        float3 v0 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[i], 1))).xyz;
-        float3 v1 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[i + 1], 1))).xyz;
-        float3 v2 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[i + 2], 1))).xyz;
+        float3 v0 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[_Indices[i]], 1))).xyz;
+        float3 v1 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[_Indices[i + 1]], 1))).xyz;
+        float3 v2 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[_Indices[i + 2]], 1))).xyz;
         
         float t, u, v;
         
